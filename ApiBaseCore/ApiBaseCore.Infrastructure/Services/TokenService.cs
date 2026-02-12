@@ -17,11 +17,15 @@ public class TokenService(IConfiguration config) : ITokenService
         var claims = new List<Claim>
         {
             // El ID del usuario es el claim más importante para identificarlo.
-            new Claim(type: ClaimTypes.NameIdentifier,
+            // Usamos JwtRegisteredClaimNames.Sub para asegurar que se mapee correctamente a 'sub' en el JWT
+            // y luego a ClaimTypes.NameIdentifier por el middleware de autenticación.
+            new Claim(type: JwtRegisteredClaimNames.Sub,
                 value: usuario.Id.ToString()),
             // También incluimos el email.
-            new Claim(type: ClaimTypes.Email,
+            new Claim(type: JwtRegisteredClaimNames.Email,
                 value: usuario.Email),
+             // JTI (JWT ID) para identificar el token de forma única
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
             // Y el rol, para poder hacer autorizaciones en el futuro.
             new Claim(type: ClaimTypes.Role,
                 value: usuario.Rol.ToString())

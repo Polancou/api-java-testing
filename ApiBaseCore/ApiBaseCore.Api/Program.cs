@@ -37,6 +37,9 @@ builder.Services.AddScoped<IExternalAuthValidator, GoogleAuthValidator>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IFileStorageService, LocalFileStorageService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+// AES Encryption Service (Singleton as it is stateless and configuration based)
+builder.Services.AddSingleton<IEncryptionService, AESEncryptionService>();
+builder.Services.AddScoped<IUserService, UserService>();
 
 builder.Services.AddHealthChecks();
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("SmtpSettings"));

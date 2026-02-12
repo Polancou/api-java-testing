@@ -7,6 +7,7 @@ using FluentAssertions;
 using Moq;
 using Microsoft.AspNetCore.Http;
 using ApiBaseCore.Application.Exceptions;
+using Moq.EntityFrameworkCore;
 
 namespace ApiBaseCore.Application.UnitTests;
 
@@ -22,6 +23,7 @@ public class ProfileServiceTests
     private readonly Mock<IApplicationDbContext> _mockDbContext;
     private readonly Mock<IMapper> _mockMapper;
     private readonly Mock<IFileStorageService> _mockFileStorage;
+    private readonly Mock<IEncryptionService> _mockEncryptionService;
 
     // La instancia real del servicio que vamos a probar.
     private readonly IProfileService _profileService;
@@ -32,16 +34,20 @@ public class ProfileServiceTests
         _mockDbContext = new Mock<IApplicationDbContext>();
         _mockMapper = new Mock<IMapper>();
         _mockFileStorage = new Mock<IFileStorageService>();
+        _mockEncryptionService = new Mock<IEncryptionService>();
 
         // Se inyectan los mocks en la implementación concreta del servicio.
         _profileService = new ProfileService(
             context: _mockDbContext.Object,
             mapper: _mockMapper.Object,
-            fileStorageService: _mockFileStorage.Object
+            fileStorageService: _mockFileStorage.Object,
+            encryptionService: _mockEncryptionService.Object
         );
     }
 
     #region Pruebas para GetProfileByIdAsync
+
+
 
     /// <summary>
     /// Prueba el "camino feliz": cuando se solicita un usuario que existe,
@@ -51,18 +57,38 @@ public class ProfileServiceTests
     public async Task GetProfileByIdAsync_WhenUserExists_ShouldReturnProfileDto()
     {
         // --- Arrange (Preparar) ---
-        var userId = 1;
+        var userId = Guid.NewGuid();
         var usuario = new Usuario(
-            nombreCompleto: "Usuario de Prueba",
+            name: "Usuario de Prueba",
             email: "test@email.com",
-            numeroTelefono: "123",
+            phone: "123",
             rol: RolUsuario.User);
-        var perfilDto = new PerfilUsuarioDto { Id = userId, NombreCompleto = "Usuario de Prueba" };
+        var perfilDto = new PerfilUsuarioDto { Id = userId, Name = "Usuario de Prueba" };
         var usuarios = new List<Usuario> { usuario };
 
         // 1. Se configura el mock del DbContext para que devuelva el usuario cuando se le busque por ID.
         // Usamos FindAsync, que es lo que el servicio utiliza internamente.
-        _mockDbContext.Setup(expression: c => c.Usuarios.FindAsync(userId)).ReturnsAsync(value: usuario);
+        // Nota: para pruebas unitarias con mocks de EF, FindAsync puede complicarse
+        // si no usamos un setup específico, pero con FirstOrDefaultAsync (normalmente usado en el servicio)
+        // se puede mockear el DbSet. Sin embargo, el servicio usa FindAsync o FirstOrDefault.
+        // Asumiendo que el servicio usa `FirstOrDefault(x => x.Id == id)` o similar.
+        // En este caso, el servicio usa `FirstOrDefaultAsync(u => u.Id == userId)`.
+        
+        // Moficamos la lista para que contenga el usuario con el ID correcto (aunque el ID se asigna privado,
+        // tendríamos que usar reflexión o asumir que el mock devuelve el usuario independientemente de la query
+        // si usamos ReturnsDbSet).
+        
+        // Para simplificar, vamos a usar reflexión para setear el ID del usuario si es necesario,
+        // o simplemente mockear el comportamiento del DbSet si usamos una librería que soporte linq.
+        // Moq.EntityFrameworkCore soporta esto.
+        
+        // Pero espera, el Usuario.Id es set privado y se genera en el constructor o por la BD.
+        // Como es Guid, es posible que sea default o algo.
+        // Vamos a usar reflection para forzar el Id del usuario para que coincida con userId.
+        var prop = typeof(Usuario).GetProperty("Id");
+        prop.SetValue(usuario, userId);
+
+        _mockDbContext.Setup(expression: c => c.Usuarios).ReturnsDbSet(usuarios);
 
         // 2. Se configura el mock de AutoMapper para que devuelva el DTO esperado cuando mapee el usuario.
         _mockMapper.Setup(expression: m => m.Map<PerfilUsuarioDto>(usuario)).Returns(value: perfilDto);
@@ -84,9 +110,9 @@ public class ProfileServiceTests
     public async Task GetProfileByIdAsync_WhenUserDoesNotExist_ShouldThrowNotFoundException() // <-- CAMBIADO
     {
         // --- Arrange (Preparar) ---
-        var userId = 99; // Un ID que sabemos que no existirá.
+        var userId = Guid.NewGuid(); // Un ID que sabemos que no existirá.
 
-        _mockDbContext.Setup(c => c.Usuarios.FindAsync(userId)).ReturnsAsync((Usuario)null);
+        _mockDbContext.Setup(c => c.Usuarios).ReturnsDbSet(new List<Usuario>());
 
         // --- Act (Actuar) ---
         // Usamos Func<Task> para capturar la acción que debe lanzar la excepción
@@ -110,12 +136,16 @@ public class ProfileServiceTests
     public async Task ActualizarPerfilAsync_WhenUserExists_ShouldUpdateAndSaveChanges()
     {
         // --- Arrange (Preparar) ---
-        var userId = 1;
-        var usuario = new Usuario(nombreCompleto: "Nombre Original",
+        var userId = Guid.NewGuid();
+        var usuario = new Usuario(name: "Nombre Original",
             email: "test@email.com",
-            numeroTelefono: "123",
+            phone: "123",
             rol: RolUsuario.User);
-        var updateDto = new ActualizarPerfilDto { NombreCompleto = "Nombre Actualizado", NumeroTelefono = "987" };
+        
+        var updateDto = new ActualizarPerfilDto { Name = "Nombre Actualizado", Phone = "987" };
+
+        var prop = typeof(Usuario).GetProperty("Id");
+        prop.SetValue(usuario, userId);
 
         // Se configura el mock para que devuelva el usuario existente.
         _mockDbContext.Setup(expression: c => c.Usuarios.FindAsync(userId)).ReturnsAsync(value: usuario);
@@ -129,8 +159,8 @@ public class ProfileServiceTests
         result.Should().BeTrue();
 
         // 2. Se comprueba que las propiedades del objeto 'usuario' en memoria hayan sido actualizadas.
-        usuario.NombreCompleto.Should().Be(expected: updateDto.NombreCompleto);
-        usuario.NumeroTelefono.Should().Be(expected: updateDto.NumeroTelefono);
+        usuario.Name.Should().Be(expected: updateDto.Name);
+        usuario.Phone.Should().Be(expected: updateDto.Phone);
 
         // 3. Se verifica que se intentó guardar los cambios en la base de datos,
         // lo cual es una parte crucial de la lógica del servicio.
@@ -146,8 +176,8 @@ public class ProfileServiceTests
     public async Task ActualizarPerfilAsync_WhenUserDoesNotExist_ShouldThrowNotFoundException() // <-- CAMBIADO
     {
         // --- Arrange (Preparar) ---
-        var userId = 99;
-        var updateDto = new ActualizarPerfilDto { NombreCompleto = "Test", NumeroTelefono = "123" };
+        var userId = Guid.NewGuid();
+        var updateDto = new ActualizarPerfilDto { Name = "Test", Phone = "123" };
 
         _mockDbContext.Setup(c => c.Usuarios.FindAsync(userId)).ReturnsAsync((Usuario)null);
 
@@ -177,7 +207,7 @@ public class ProfileServiceTests
     public async Task CambiarPasswordAsync_WhenOldPasswordIsCorrect_ShouldUpdatePassword()
     {
         // --- Arrange (Preparar) ---
-        var userId = 1;
+        var userId = Guid.NewGuid();
         var oldPassword = "PasswordAntigua123!";
         var newPassword = "PasswordNueva456!";
         var user = new Usuario("Test User",
@@ -185,8 +215,15 @@ public class ProfileServiceTests
             "123",
             RolUsuario.User);
 
-        // Establece el hash de la contraseña antigua en la entidad de usuario
-        user.EstablecerPasswordHash(BCrypt.Net.BCrypt.HashPassword(oldPassword));
+        // Configurar Mocks
+        var oldHash = "EncryptedOld";
+        var newHash = "EncryptedNew";
+        
+        user.EstablecerPasswordHash(oldHash);
+        
+        _mockEncryptionService.Setup(e => e.Decrypt(oldHash)).Returns(oldPassword);
+        _mockEncryptionService.Setup(e => e.Encrypt(newPassword)).Returns(newHash);
+
 
         var dto = new CambiarPasswordDto
         {
@@ -208,9 +245,7 @@ public class ProfileServiceTests
         result.Message.Should().Be("Contraseña actualizada exitosamente.");
 
         // 2. Verifica que el hash de la contraseña en la entidad fue actualizado
-        user.PasswordHash.Should().NotBe(null);
-        BCrypt.Net.BCrypt.Verify(newPassword,
-            user.PasswordHash).Should().BeTrue();
+        user.PasswordHash.Should().Be(newHash);
 
         // 3. Verifica que se llamó a SaveChanges
         _mockDbContext.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
@@ -225,7 +260,7 @@ public class ProfileServiceTests
     public async Task CambiarPasswordAsync_WhenOldPasswordIsIncorrect_ShouldThrowValidationException() // <-- CAMBIADO
     {
         // --- Arrange (Preparar) ---
-        var userId = 1;
+        var userId = Guid.NewGuid();
         var correctOldPassword = "PasswordAntigua123!";
         var wrongOldPassword = "PasswordEquivocadaXXX";
 
@@ -233,7 +268,12 @@ public class ProfileServiceTests
             "test@email.com",
             "123",
             RolUsuario.User);
-        user.EstablecerPasswordHash(BCrypt.Net.BCrypt.HashPassword(correctOldPassword));
+        
+        var oldHash = "EncryptedOld";
+        user.EstablecerPasswordHash(oldHash);
+        
+        // Decrypt devuelve la correcta
+        _mockEncryptionService.Setup(e => e.Decrypt(oldHash)).Returns(correctOldPassword);
 
         var dto = new CambiarPasswordDto
         {
@@ -266,11 +306,11 @@ public class ProfileServiceTests
     public async Task UploadAvatarAsync_WhenUserExists_ShouldSaveFileAndUpdateUser()
     {
         // --- Arrange (Preparar) ---
-        var userId = 1;
+        var userId = Guid.NewGuid();
         var fakeFileUrl = "/uploads/avatars/fake-guid.jpg";
-        var usuario = new Usuario(nombreCompleto: "Test User",
+        var usuario = new Usuario(name: "Test User",
             email: "test@email.com",
-            numeroTelefono: "123",
+            phone: "123",
             rol: RolUsuario.User);
 
         // Simula un IFormFile

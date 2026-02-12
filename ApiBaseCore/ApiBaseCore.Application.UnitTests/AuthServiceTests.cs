@@ -25,6 +25,7 @@ public class AuthServiceTests
     private readonly Mock<IExternalAuthValidator> _mockExternalAuthValidator;
     private readonly Mock<IEmailService> _mockEmailService;
     private readonly Mock<IConfiguration> _mockConfiguration;
+    private readonly Mock<IEncryptionService> _mockEncryptionService;
 
     // La instancia real del servicio que vamos a probar, inyectado con nuestras dependencias simuladas.
     private readonly AuthService _authService;
@@ -38,6 +39,7 @@ public class AuthServiceTests
         _mockExternalAuthValidator = new Mock<IExternalAuthValidator>();
         _mockEmailService = new Mock<IEmailService>();
         _mockConfiguration = new Mock<IConfiguration>();
+        _mockEncryptionService = new Mock<IEncryptionService>();
 
         // Creamos un mock de la transacción
         var mockTransaction = new Mock<IDbContextTransaction>();
@@ -49,7 +51,8 @@ public class AuthServiceTests
             tokenService: _mockTokenService.Object,
             externalAuthValidator: _mockExternalAuthValidator.Object,
             emailService: _mockEmailService.Object, 
-            configuration: _mockConfiguration.Object
+            configuration: _mockConfiguration.Object,
+            encryptionService: _mockEncryptionService.Object
         );
         // Simula la configuración de appsettings.json
         var mockConfigSection = new Mock<IConfigurationSection>();
@@ -69,9 +72,11 @@ public class AuthServiceTests
         {
             Email = "nuevo@email.com",
             Password = "password123",
-            NombreCompleto = "Nuevo Usuario",
-            NumeroTelefono = "123456"
+            Name = "Nuevo Usuario",
+            Phone = "123456"
         };
+        
+        _mockEncryptionService.Setup(e => e.Encrypt(registroDto.Password)).Returns("encrypted-pwd-123");
 
         // Se configura el mock del DbContext para que devuelva una lista vacía
         // al consultar los usuarios. Esto simula que el email no está en uso.
@@ -99,7 +104,7 @@ public class AuthServiceTests
     public async Task RegisterAsync_WithExistingEmail_ShouldReturnFail()
     {
         // --- Arrange (Preparar) ---
-        var registroDto = new RegistroUsuarioDto { Email = "existente@email.com", Password = "password123" };
+        var registroDto = new RegistroUsuarioDto { Email = "existente@email.com", Password = "password123", Name = "Usuario Existente", Phone = "1234567890" };
         var existingUser = new List<Usuario>
             { new("Usuario Existente",
                 "existente@email.com",
@@ -248,7 +253,7 @@ public class AuthServiceTests
         // 2. Verifica que el token se guardó en el usuario
         usuario.PasswordResetToken.Should().Be(fakeToken);
         usuario.PasswordResetTokenExpiryTime.Should().BeCloseTo(DateTime.UtcNow.AddHours(1),
-            precision: TimeSpan.FromSeconds(5));
+            TimeSpan.FromSeconds(5));
 
         // 3. Verifica que se guardó en la BD y se envió el email
         _mockDbContext.Verify(c => c.SaveChangesAsync(It.IsAny<CancellationToken>()),
@@ -298,7 +303,10 @@ public class AuthServiceTests
         // --- Arrange (Preparar) ---
         var fakeToken = "valid-token-456";
         var dto = new ResetPasswordDto { Token = fakeToken, NewPassword = "NewPassword123!", ConfirmPassword = "NewPassword123!" };
-        var oldHash = BCrypt.Net.BCrypt.HashPassword("OldPassword");
+        var oldHash = "EncryptedOldPassword"; // Just a placeholder string, mocked encryption service handles "encrypting"
+        var newHash = "EncryptedNewPassword";
+
+        _mockEncryptionService.Setup(e => e.Encrypt(dto.NewPassword)).Returns(newHash);
 
         var usuario = new Usuario("Test User",
             "test@test.com",
@@ -320,7 +328,7 @@ public class AuthServiceTests
         result.Message.Should().Be("Contraseña restablecida exitosamente.");
 
         // 1. Verifica que la contraseña cambió
-        usuario.PasswordHash.Should().NotBe(oldHash);
+        usuario.PasswordHash.Should().Be(newHash);
 
         // 2. Verifica que el token fue limpiado
         usuario.PasswordResetToken.Should().BeNull();

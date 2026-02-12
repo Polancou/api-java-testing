@@ -9,15 +9,14 @@ public abstract class BaseApiController : ControllerBase
 {
     /// <summary>
     /// Gets the authenticated user's ID from the claims.
-    /// Returns 0 if the user is not authenticated or the claim is missing.
+    /// Returns Guid.Empty if the user is not authenticated or the claim is missing.
     /// </summary>
-    protected int UserId
+    protected Guid UserId
     {
         get
         {
-            var userIdClaim = User.FindFirst(type: ClaimTypes.NameIdentifier);
-            return userIdClaim != null && int.TryParse(s: userIdClaim.Value,
-                result: out var userId) ? userId : 0;
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier);
+            return userIdClaim != null && Guid.TryParse(userIdClaim.Value, out var userId) ? userId : Guid.Empty;
         }
     }
 }

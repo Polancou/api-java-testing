@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.Json.Serialization;
 
 namespace ApiBaseCore.Domain.Models;
 
@@ -13,117 +14,97 @@ public enum RolUsuario
 
 /// <summary>
 /// Representa la entidad principal de un usuario en la aplicación.
-/// Esta clase encapsula todos los datos y comportamientos de un usuario.
 /// </summary>
 public class Usuario
 {
     #region Propiedades
 
-    /// <summary>
-    /// Representa la entidad principal de un usuario en la aplicación.
-    /// </summary>
     [Key]
-    public int Id { get; private set; }
-    /// <summary>
-    /// El nombre completo del usuario.
-    /// </summary>
-    [Required]
-    [MaxLength(100)]
-    public string NombreCompleto { get; private set; }
-    /// <summary>
-    /// El email del usuario.
-    /// </summary>
+    [JsonPropertyName("id")]
+    public Guid Id { get; private set; }
+
     [Required]
     [EmailAddress]
     [MaxLength(100)]
+    [JsonPropertyName("email")]
     public string Email { get; private set; }
-    /// <summary>
-    /// El hash de la contraseña. Es opcional ('nullable') para permitir
-    /// inicios de sesión de terceros (ej. Google) que no usan contraseña en nuestro sistema.
-    /// </summary>
-    public string? PasswordHash { get; private set; }
-    /// <summary>
-    /// El número de teléfono del usuario.
-    /// </summary>
+
+    [Required]
+    [MaxLength(100)]
+    [JsonPropertyName("name")]
+    public string Name { get; private set; }
+
     [Required]
     [MaxLength(20)]
-    public string NumeroTelefono { get; private set; }
-    /// <summary>
-    /// El rol del usuario.
-    /// </summary>
+    [JsonPropertyName("phone")]
+    public string Phone { get; private set; }
+
+    [JsonIgnore]
+    public string? PasswordHash { get; private set; }
+
+    [MaxLength(20)]
+    [JsonPropertyName("tax_id")]
+    public string? TaxId { get; private set; }
+
+    [JsonPropertyName("created_at")]
+    public DateTime CreatedAt { get; private set; }
+
     [Required]
+    [JsonIgnore]
     public RolUsuario Rol { get; private set; }
-    /// <summary>
-    /// La fecha de registro del usuario.
-    /// </summary>
-    public DateTime FechaRegistro { get; private set; }
-    /// <summary>
-    /// La URL de la imagen de perfil del usuario.
-    /// </summary>
+
+    [JsonPropertyName("addresses")]
+    public List<Address> Addresses { get; private set; } = new();
+
+    // --- Technical/Auth Fields ---
+
+    [JsonIgnore]
     public string? AvatarUrl { get; private set; }
-    /// <summary>
-    /// El token de actualización (refresh token) para mantener la sesión.
-    /// Se almacena aquí (hasheado) para poder revocarlo.
-    /// </summary>
+
+    [JsonIgnore]
     public string? RefreshToken { get; private set; }
-    /// <summary>
-    /// La fecha en que expira el token de actualización.
-    /// </summary>
+
+    [JsonIgnore]
     public DateTime? RefreshTokenExpiryTime { get; private set; }
-    /// <summary>
-    /// Token de concurrencia. EF Core lo usa para detectar
-    /// si la fila ha sido modificada por otro proceso.
-    /// </summary>
+
     [Timestamp]
+    [JsonIgnore]
     public byte[] RowVersion { get; private set; }
-    /// <summary>
-    /// El token único enviado al email del usuario para confirmar su cuenta.
-    /// </summary>
+
+    [JsonIgnore]
     public string? EmailVerificationToken { get; private set; }
-    /// <summary>
-    /// Indica si el email del usuario ha sido verificado.
-    /// </summary>
+
+    [JsonIgnore]
     public bool IsEmailVerified { get; private set; }
-    /// <summary>
-    /// Token único para restablecer la contraseña.
-    /// </summary>
+
+    [JsonIgnore]
     public string? PasswordResetToken { get; private set; }
-    /// <summary>
-    /// La fecha y hora en que expira el token de restablecimiento.
-    /// </summary>
+
+    [JsonIgnore]
     public DateTime? PasswordResetTokenExpiryTime { get; private set; }
 
     #endregion
 
     #region Constructores
 
-    /// <summary>
-    /// Constructor privado sin parámetros, requerido por Entity Framework Core.
-    /// </summary>
     private Usuario()
     {
     }
 
-    /// <summary>
-    /// Constructor público para crear nuevos usuarios de forma controlada y válida.
-    /// </summary>
-    public Usuario(string nombreCompleto, string email, string numeroTelefono, RolUsuario rol)
+    public Usuario(string name, string email, string phone, RolUsuario rol, string? taxId = null)
     {
-        // Verifica que el nombre completo no sea nulo o vacío.
-        if (string.IsNullOrWhiteSpace(nombreCompleto))
-            throw new ArgumentNullException(nameof(nombreCompleto),
-                "El nombre completo es obligatorio.");
-        // Verifica que el email no sea nulo o vacío.
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentNullException(nameof(name), "El nombre es obligatorio.");
         if (string.IsNullOrWhiteSpace(email))
-            throw new ArgumentNullException(nameof(email),
-                "El email es obligatorio.");
-        // Establece los valores de la entidad.
-        NombreCompleto = nombreCompleto;
+            throw new ArgumentNullException(nameof(email), "El email es obligatorio.");
+
+        Id = Guid.NewGuid();
+        Name = name;
         Email = email;
-        NumeroTelefono = numeroTelefono;
+        Phone = phone;
         Rol = rol;
-        FechaRegistro = DateTime.UtcNow;
-        // Los usuarios nuevos comienzan sin verificar.
+        TaxId = taxId;
+        CreatedAt = DateTime.UtcNow;
         IsEmailVerified = false;
     }
 
@@ -131,102 +112,67 @@ public class Usuario
 
     #region Métodos de Modificación
 
-    /// <summary>
-    /// Establece o actualiza el hash de la contraseña del usuario.
-    /// </summary>
     public void EstablecerPasswordHash(string passwordHash)
     {
         if (string.IsNullOrWhiteSpace(passwordHash))
-            throw new ArgumentNullException(nameof(passwordHash),
-                "El hash de la contraseña no puede estar vacío.");
-
+            throw new ArgumentNullException(nameof(passwordHash), "El hash de la contraseña no puede estar vacío.");
         PasswordHash = passwordHash;
     }
 
-    /// <summary>
-    /// Actualiza el número de teléfono del usuario de forma individual.
-    /// </summary>
-    public void ActualizarNumeroTelefono(string nuevoNumero)
+    public void UpdateProfile(string name, string phone, string? taxId)
     {
-        if (string.IsNullOrWhiteSpace(nuevoNumero))
-            throw new ArgumentException("El nuevo número de teléfono no puede estar vacío.",
-                nameof(nuevoNumero));
-
-        NumeroTelefono = nuevoNumero;
+        if (!string.IsNullOrWhiteSpace(name)) Name = name;
+        if (!string.IsNullOrWhiteSpace(phone)) Phone = phone;
+        if (taxId != null) TaxId = taxId;
     }
 
-    /// <summary>
-    /// Actualiza la información del perfil del usuario (nombre y teléfono).
-    /// </summary>
-    public void ActualizarPerfil(string nuevoNombre, string nuevoNumero)
+    public void AddAddress(Address address)
     {
-        if (!string.IsNullOrWhiteSpace(nuevoNombre))
+        Addresses.Add(address);
+    }
+
+    public void RemoveAddress(int addressId)
+    {
+        var address = Addresses.FirstOrDefault(a => a.Id == addressId);
+        if (address != null)
         {
-            NombreCompleto = nuevoNombre;
-        }
-        if (!string.IsNullOrWhiteSpace(nuevoNumero))
-        {
-            NumeroTelefono = nuevoNumero;
+            Addresses.Remove(address);
         }
     }
 
-    /// <summary>
-    /// Actualiza la URL de la imagen de perfil del usuario.
-    /// </summary>
     public void SetAvatarUrl(string nuevoUrl)
     {
-        if (!string.IsNullOrWhiteSpace(nuevoUrl))
-        {
-            AvatarUrl = nuevoUrl;
-        }
+        if (!string.IsNullOrWhiteSpace(nuevoUrl)) AvatarUrl = nuevoUrl;
     }
     
-    /// <summary>
-    /// Establece un nuevo token de actualización y su fecha de expiración.
-    /// </summary>
     public void SetRefreshToken(string refreshToken, DateTime expiryTime)
     {
         RefreshToken = refreshToken;
         RefreshTokenExpiryTime = expiryTime;
     }
     
-    /// <summary>
-    /// Establece el rol del usuario.
-    /// </summary>
     public void SetRol(RolUsuario rol)
     {
         Rol = rol;
     }
 
-    /// <summary>
-    /// Establece el token de verificación de email.
-    /// </summary>
     public void SetEmailVerificationToken(string token)
     {
         EmailVerificationToken = token;
     }
 
-    /// <summary>
-    /// Marca el email del usuario como verificado y limpia el token.
-    /// </summary>
     public void MarkEmailAsVerified()
     {
         IsEmailVerified = true;
-        EmailVerificationToken = null; // El token ya no es necesario
+        EmailVerificationToken = null;
     }
 
-    /// <summary>
-    /// Establece un nuevo token de restablecimiento de contraseña y su expiración.
-    /// </summary>
     public void SetPasswordResetToken(string token, DateTime expiryTime)
     {
         PasswordResetToken = token;
         PasswordResetTokenExpiryTime = expiryTime;
     }
 
-    /// <summary>
-    /// Limpia el token de restablecimiento de contraseña (usado después de un reseteo exitoso).
-    /// </summary>
     public void ClearPasswordResetToken()
     {
         PasswordResetToken = null;

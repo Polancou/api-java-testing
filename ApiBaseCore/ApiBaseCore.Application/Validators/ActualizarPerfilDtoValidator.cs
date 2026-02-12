@@ -10,8 +10,13 @@ public class ActualizarPerfilDtoValidator : AbstractValidator<ActualizarPerfilDt
 {
     public ActualizarPerfilDtoValidator()
     {
-        RuleFor(expression: x => x.NombreCompleto).NotEmpty().Length(min: 3,
-            max: 100);
-        RuleFor(expression: x => x.NumeroTelefono).NotEmpty();
+        RuleFor(x => x.Name)
+            .MaximumLength(100).WithMessage("El nombre no puede exceder los 100 caracteres.")
+            .When(x => x.Name != null); // Solo validar si se envía un valor
+
+        RuleFor(x => x.Phone)
+            .Matches(@"^\+?[1-9]\d{1,14}$").WithMessage("El número de teléfono no es válido.")
+            .When(x => x.Phone != null);
+        RuleFor(x => x.Phone).NotEmpty().When(x => x.Phone != null);
     }
 }

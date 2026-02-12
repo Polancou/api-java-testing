@@ -210,27 +210,41 @@ public class TestApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
         using var scope = Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // Ejecuta T-SQL para deshabilitar constraints, borrar datos y rehabilitar constraints
-        await context.Database.ExecuteSqlRawAsync("EXEC sp_MSforeachtable 'ALTER TABLE ? NOCHECK CONSTRAINT all'");
-        await context.Database.ExecuteSqlRawAsync("EXEC sp_MSforeachtable 'DELETE FROM ?'");
-        await context.Database.ExecuteSqlRawAsync(
-            "EXEC sp_MSforeachtable 'ALTER TABLE ? WITH CHECK CHECK CONSTRAINT all'");
+        var tableNames = context.Model.GetEntityTypes()
+            .Select(t => t.GetTableName())
+            .Where(t => !string.IsNullOrEmpty(t))
+            .Distinct()
+            .ToList();
+
+        foreach (var tableName in tableNames)
+        {
+            // Disable constraints
+            await context.Database.ExecuteSqlRawAsync($"ALTER TABLE [{tableName}] NOCHECK CONSTRAINT ALL");
+            
+            // Delete data with QUOTED_IDENTIFIER ON
+            await context.Database.ExecuteSqlRawAsync($"SET QUOTED_IDENTIFIER ON; DELETE FROM [{tableName}]");
+            
+            // Re-enable constraints
+            await context.Database.ExecuteSqlRawAsync($"ALTER TABLE [{tableName}] WITH CHECK CHECK CONSTRAINT ALL");
+        }
     }
 
     /// <summary>
     /// Método helper para crear un usuario 'User' estándar.
     /// </summary>
-    public async Task<(int UserId, string Token)> CreateUserAndGetTokenAsync(string name, string email)
+    public async Task<(Guid UserId, string Token)> CreateUserAndGetTokenAsync(string name, string email)
     {
         using var scope = Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
+        // Use container's encryption service
+        var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
 
-        var user = new Usuario(nombreCompleto: name,
+        var user = new Usuario(name: name,
             email: email,
-            numeroTelefono: "123456789",
+            phone: "+123456789",
             rol: RolUsuario.User);
-        user.EstablecerPasswordHash(passwordHash: BCrypt.Net.BCrypt.HashPassword("password123"));
+        user.EstablecerPasswordHash(passwordHash: encryptionService.Encrypt("password123"));
         await context.Usuarios.AddAsync(user);
         await context.SaveChangesAsync();
 
@@ -241,21 +255,22 @@ public class TestApiFactory : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>
     /// Método helper para crear un usuario con un rol específico (ej. 'Admin').
     /// </summary>
-    public async Task<(int userId, string token)> CreateUserAndGetTokenAsync(string name, string email, RolUsuario rol)
+    public async Task<(Guid userId, string token)> CreateUserAndGetTokenAsync(string name, string email, RolUsuario rol)
     {
         using var scope = Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         var tokenService = scope.ServiceProvider.GetRequiredService<ITokenService>();
+        var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
 
-        var user = new Usuario(nombreCompleto: name,
+        var user = new Usuario(name: name,
             email: email,
-            numeroTelefono: "123456789",
+            phone: "+123456789",
             rol: rol);
-        user.EstablecerPasswordHash(passwordHash: BCrypt.Net.BCrypt.HashPassword("password123"));
+        user.EstablecerPasswordHash(passwordHash: encryptionService.Encrypt("password123"));
         await context.Usuarios.AddAsync(user);
         await context.SaveChangesAsync();
 
-        var token = tokenService.CrearToken(usuario: user);
+        var token = tokenService.CrearToken(user);
         return (user.Id, token);
     }
 }

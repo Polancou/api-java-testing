@@ -73,6 +73,8 @@ dotnet run --project ApiBaseCore.Api
 ```bash
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost,1433;Database=ApiBaseCore_db;User Id=sa;Password=YourStrongPassword!;TrustServerCertificate=True;"
 dotnet user-secrets set "Jwt:Key" "SUPER_SECRET_KEY_MIN_64_CHARS_LONG_FOR_HMAC_SHA512"
+dotnet user-secrets set "Security:EncryptionKey" "YOUR_32_BYTE_BASE64_KEY_HERE"
+dotnet user-secrets set "Security:EncryptionIV" "YOUR_16_BYTE_BASE64_IV_HERE"
 ```
 
 ---

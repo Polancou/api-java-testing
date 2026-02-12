@@ -1,3 +1,4 @@
+using ApiBaseCore.Application.Interfaces;
 using System.Net;
 using System.Net.Http.Json;
 using ApiBaseCore.Application.DTOs;
@@ -54,29 +55,29 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
         // Se crea un DTO con datos de registro válidos.
         var registroDto = new RegistroUsuarioDto
         {
-            NombreCompleto = "Usuario de Prueba",
+            Name = "Usuario de Prueba",
             Email = "test@email.com",
             Password = "PasswordValida123",
-            NumeroTelefono = "1234567890"
+            Phone = "1234567890"
         };
 
         // --- Act (Actuar) ---
         // Se envía una petición POST al endpoint de registro.
-        var response = await _client.PostAsJsonAsync(requestUri: $"/api/{ApiVersion}/auth/register",
-            value: registroDto);
+        var response = await _client.PostAsJsonAsync($"/api/{ApiVersion}/auth/register",
+            registroDto);
 
         // --- Assert (Verificar) ---
         // 1. Se verifica que la respuesta HTTP sea 200 OK.
-        response.StatusCode.Should().Be(expected: HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
         var responseBody = await response.Content.ReadFromJsonAsync<object>();
         responseBody.Should().NotBeNull();
 
         // 2. Se verifica directamente en la base de datos que el usuario fue creado correctamente.
         using var scope = _factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var newUser = await context.Usuarios.FirstOrDefaultAsync(predicate: u => u.Email == registroDto.Email);
+        var newUser = await context.Usuarios.FirstOrDefaultAsync(u => u.Email == registroDto.Email);
         newUser.Should().NotBeNull();
-        newUser.NombreCompleto.Should().Be(expected: registroDto.NombreCompleto);
+        newUser.Name.Should().Be(registroDto.Name);
     }
 
     /// <summary>
@@ -90,33 +91,38 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
         using (var scope = _factory.Services.CreateScope())
         {
             var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
             var initialUser = new Usuario(
-                nombreCompleto: "Usuario Original",
+                name: "Usuario Original",
                 email: "existente@email.com",
-                numeroTelefono: "123456789",
+                phone: "123456789",
                 rol: RolUsuario.User);
-            initialUser.EstablecerPasswordHash(passwordHash: BCrypt.Net.BCrypt.HashPassword(inputKey: "password123"));
-            await context.Usuarios.AddAsync(entity: initialUser);
+            initialUser.EstablecerPasswordHash(encryptionService.Encrypt("password123"));
+            await context.Usuarios.AddAsync(initialUser);
             await context.SaveChangesAsync();
         }
 
         // 2. Se crea un DTO que intenta usar el mismo email.
         var registroDto = new RegistroUsuarioDto
         {
-            NombreCompleto = "Usuario Duplicado",
+            Name = "Usuario Duplicado",
             Email = "existente@email.com",
             Password = "password456",
-            NumeroTelefono = "987654321"
+            Phone = "987654321"
         };
 
         // --- Act (Actuar) ---
         // Se envía la petición de registro.
-        var response = await _client.PostAsJsonAsync(requestUri: $"/api/{ApiVersion}/auth/register",
-            value: registroDto);
+        var response = await _client.PostAsJsonAsync($"/api/{ApiVersion}/auth/register",
+            registroDto);
 
         // --- Assert (Verificar) ---
-        // Se verifica que la API devuelva un error 400 Bad Request.
-        response.StatusCode.Should().Be(expected: HttpStatusCode.BadRequest);
+        // Se verifica que la API devuelva OK (200) para no revelar si el correo existe (seguridad).
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        
+        var body = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+        body.Should().ContainKey("message");
+        body["message"].Should().Be("Si el correo es válido, recibirás un enlace de confirmación.");
     }
 
     /// <summary>
@@ -124,9 +130,9 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
     /// Esto verifica que las reglas de FluentValidation están funcionando correctamente.
     /// </summary>
     [Theory]
-    [InlineData(data: ["", "valido@email.com", "passvalido", "Teléfono Válido", "El nombre es obligatorio."])]
-    [InlineData(data: ["Nombre Válido", "email-invalido", "passvalido", "Teléfono Válido", "El formato del email no es válido."])]
-    [InlineData(data: ["Nombre Válido", "valido@email.com", "corta", "Teléfono Válido", "La contraseña debe tener al menos 8 caracteres."])]
+    [InlineData("", "valido@email.com", "passvalido", "Teléfono Válido", "El nombre completo es obligatorio.")]
+    [InlineData("Nombre Válido", "email-invalido", "passvalido", "Teléfono Válido", "El formato del email no es válido.")]
+    [InlineData("Nombre Válido", "valido@email.com", "corta", "Teléfono Válido", "La contraseña debe tener al menos 6 caracteres.")]
     public async Task Register_WithInvalidData_ShouldReturnBadRequest(string nombre, string email, string password,
         string telefono, string expectedError)
     {
@@ -134,24 +140,24 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
         // Se crea un DTO con los datos de prueba inválidos proporcionados por [InlineData].
         var registroDto = new RegistroUsuarioDto
         {
-            NombreCompleto = nombre,
+            Name = nombre,
             Email = email,
             Password = password,
-            NumeroTelefono = telefono
+            Phone = telefono
         };
 
         // --- Act (Actuar) ---
         // Se envía la petición.
-        var response = await _client.PostAsJsonAsync(requestUri: $"/api/{ApiVersion}/auth/register",
-            value: registroDto);
+        var response = await _client.PostAsJsonAsync($"/api/{ApiVersion}/auth/register",
+            registroDto);
 
         // --- Assert (Verificar) ---
         // 1. Se verifica que el código de estado sea 400 Bad Request.
-        response.StatusCode.Should().Be(expected: HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
         // 2. Se verifica que el cuerpo de la respuesta contenga el mensaje de error específico que esperamos de FluentValidation.
         var errorBody = await response.Content.ReadAsStringAsync();
-        errorBody.Should().Contain(expected: expectedError);
+        errorBody.Should().Contain(expectedError);
     }
 
     #endregion
@@ -170,23 +176,24 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
         using (var scope = _factory.Services.CreateScope())
         {
             var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var user = new Usuario(nombreCompleto: "Test Login",
+            var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
+            var user = new Usuario(name: "Test Login",
                 email: email,
-                numeroTelefono: "111222333",
+                phone: "111222333",
                 rol: RolUsuario.User);
-            user.EstablecerPasswordHash(passwordHash: BCrypt.Net.BCrypt.HashPassword(inputKey: password));
-            await context.Usuarios.AddAsync(entity: user);
+            user.EstablecerPasswordHash(encryptionService.Encrypt(password));
+            await context.Usuarios.AddAsync(user);
             await context.SaveChangesAsync();
         }
 
         var loginDto = new LoginUsuarioDto { Email = email, Password = password };
 
         // --- Act (Actuar) ---
-        var response = await _client.PostAsJsonAsync(requestUri: $"/api/{ApiVersion}/auth/login",
-            value: loginDto);
+        var response = await _client.PostAsJsonAsync($"/api/{ApiVersion}/auth/login",
+            loginDto);
 
         // --- Assert (Verificar) ---
-        response.StatusCode.Should().Be(expected: HttpStatusCode.OK);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
 
         // 1. Verificamos que el cuerpo de la respuesta sea el DTO esperado.
         var responseData = await response.Content.ReadFromJsonAsync<TokenResponseDto>();
@@ -200,7 +207,7 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
             var user = await context.Usuarios.FirstOrDefaultAsync(u => u.Email == email);
             user.Should().NotBeNull();
             user.RefreshTokenExpiryTime.Should().BeCloseTo(DateTime.UtcNow.AddDays(30),
-                precision: TimeSpan.FromSeconds(10));
+                TimeSpan.FromSeconds(10));
         }
     }
 
@@ -300,7 +307,7 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
 
         user.PasswordResetToken.Should().NotBeNullOrEmpty();
         user.PasswordResetTokenExpiryTime.Should().BeCloseTo(DateTime.UtcNow.AddHours(1),
-            precision: TimeSpan.FromSeconds(10));
+            TimeSpan.FromSeconds(10));
     }
 
     [Fact]
@@ -368,8 +375,9 @@ public class AuthControllerTests : IClassFixture<TestApiFactory>, IAsyncLifetime
             user.PasswordResetToken.Should().BeNull();
             // Verifica que la contraseña cambió
             user.PasswordHash.Should().NotBe(oldHash);
-            BCrypt.Net.BCrypt.Verify(newPassword,
-                user.PasswordHash).Should().BeTrue();
+            var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
+            var decryptedPassword = encryptionService.Decrypt(user.PasswordHash);
+            decryptedPassword.Should().Be(newPassword);
         }
     }
 

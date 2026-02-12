@@ -1,3 +1,4 @@
+using ApiBaseCore.Application.Interfaces;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -74,7 +75,7 @@ public class ProfileControllerTests : IClassFixture<TestApiFactory>, IAsyncLifet
         profile.Should().NotBeNull();
         profile.Id.Should().Be(expected: userId);
         profile.Email.Should().Be(expected: "test@email.com");
-        profile.NombreCompleto.Should().Be(expected: "Usuario Original");
+        profile.Name.Should().Be(expected: "Usuario Original");
     }
 
     /// <summary>
@@ -120,8 +121,8 @@ public class ProfileControllerTests : IClassFixture<TestApiFactory>, IAsyncLifet
         // 2. Se crea el DTO con los nuevos datos del perfil.
         var updateDto = new ActualizarPerfilDto
         {
-            NombreCompleto = "Usuario Actualizado",
-            NumeroTelefono = "9876543210"
+            Name = "Usuario Actualizado",
+            Phone = "9876543210"
         };
 
         // --- Act (Actuar) ---
@@ -140,8 +141,8 @@ public class ProfileControllerTests : IClassFixture<TestApiFactory>, IAsyncLifet
         var updatedUser = await context.Usuarios.FindAsync(keyValues: userId);
 
         updatedUser.Should().NotBeNull();
-        updatedUser.NombreCompleto.Should().Be(expected: updateDto.NombreCompleto);
-        updatedUser.NumeroTelefono.Should().Be(expected: updateDto.NumeroTelefono);
+        updatedUser.Name.Should().Be(expected: updateDto.Name);
+        updatedUser.Phone.Should().Be(expected: updateDto.Phone);
     }
 
     /// <summary>
@@ -154,7 +155,7 @@ public class ProfileControllerTests : IClassFixture<TestApiFactory>, IAsyncLifet
         // --- Arrange (Preparar) ---
         // Se asegura de que no haya ningún token en el encabezado de autorización.
         _client.DefaultRequestHeaders.Authorization = null;
-        var updateDto = new ActualizarPerfilDto { NombreCompleto = "No importa", NumeroTelefono = "123" };
+        var updateDto = new ActualizarPerfilDto { Name = "No importa", Phone = "123" };
 
         // --- Act (Actuar) ---
         // Se envía la petición PUT al endpoint protegido.
@@ -205,9 +206,10 @@ public class ProfileControllerTests : IClassFixture<TestApiFactory>, IAsyncLifet
         // 2. Verifica que la contraseña realmente cambió en la base de datos
         using var scope = _factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
         var updatedUser = await context.Usuarios.FindAsync(userId);
-        BCrypt.Net.BCrypt.Verify(dto.NewPassword,
-            updatedUser.PasswordHash).Should().BeTrue();
+        var decryptedPassword = encryptionService.Decrypt(updatedUser.PasswordHash);
+        decryptedPassword.Should().Be(dto.NewPassword);
     }
 
     /// <summary>

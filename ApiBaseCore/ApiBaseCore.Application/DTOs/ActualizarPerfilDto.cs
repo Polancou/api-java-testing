@@ -1,7 +1,6 @@
-namespace ApiBaseCore.Application.DTOs;
-
 public class ActualizarPerfilDto
 {
-    public string NombreCompleto { get; set; }
-    public string NumeroTelefono { get; set; }
+    public string? Name { get; set; }
+    public string? Phone { get; set; }
+    public string? TaxId { get; set; }
 }

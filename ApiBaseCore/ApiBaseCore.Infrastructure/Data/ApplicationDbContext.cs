@@ -37,6 +37,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
     /// </summary>
     public virtual DbSet<UserLogin> UserLogins { get; set; }
 
+    public virtual DbSet<Address> Addresses { get; set; }
 
 
     public async Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
@@ -61,7 +62,13 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // dos entradas con la misma combinación de proveedor y clave de proveedor.
         // Por ejemplo, no puede haber dos inicios de sesión de 'Google' con el mismo ID de usuario de Google.
         modelBuilder.Entity<UserLogin>()
-            .HasKey(l => new { l.LoginProvider, l.ProviderKey });
+            .HasKey(ul => new { ul.LoginProvider, ul.ProviderKey });
+
+        modelBuilder.Entity<Address>()
+            .HasOne(a => a.Usuario)
+            .WithMany(u => u.Addresses)
+            .HasForeignKey(a => a.UsuarioId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         // Configuración para la entidad Usuario
         var usuarioEntity = modelBuilder.Entity<Usuario>();
@@ -70,6 +77,9 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // SQL Server entiende esto nativamente
         usuarioEntity.Property(u => u.RowVersion)
             .IsRowVersion();
+
+        usuarioEntity.HasIndex(u => u.TaxId)
+            .IsUnique();
 
 
     }

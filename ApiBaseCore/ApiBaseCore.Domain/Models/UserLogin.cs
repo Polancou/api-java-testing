@@ -15,7 +15,7 @@ public class UserLogin
     [Key] public string ProviderKey { get; private set; }
 
     // Clave foránea que vincula este login con nuestro registro de Usuario.
-    public int UsuarioId { get; private set; }
+    public Guid UsuarioId { get; private set; }
 
     // Propiedad de navegación para que EF Core pueda cargar el objeto Usuario relacionado.
     public Usuario Usuario { get; private set; }
