@@ -1,0 +1,20 @@
+using EcommerceCore.Application.DTOs;
+using FluentValidation;
+
+namespace EcommerceCore.Application.Validators;
+
+/// <summary>
+/// Define las reglas de validación para el DTO de inicio de sesión (LoginUsuarioDto).
+/// </summary>
+public class LoginUsuarioDtoValidator : AbstractValidator<LoginUsuarioDto>
+{
+    public LoginUsuarioDtoValidator()
+    {
+        RuleFor(expression: x => x.Email)
+            .NotEmpty().WithMessage(errorMessage: "El email es obligatorio.")
+            .EmailAddress().WithMessage(errorMessage: "El formato del email no es válido.");
+
+        RuleFor(expression: x => x.Password)
+            .NotEmpty().WithMessage(errorMessage: "La contraseña es obligatoria.");
+    }
+}

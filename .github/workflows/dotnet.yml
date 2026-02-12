@@ -1,0 +1,100 @@
+name: PR Validation
+
+# Se ejecuta solo cuando se abre o actualiza un PR hacia la rama 'main'
+on:
+  pull_request:
+    branches: [ "main" ]
+    types: [opened, synchronize, reopened]
+
+# Cancelar ejecuciones anteriores si se suben nuevos cambios al mismo PR (ahorra recursos)
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # JOB 1: Validación del Frontend (Vue 3 + Vite + TypeScript)
+  # ------------------------------------------------------------------
+  frontend-check:
+    name: 🟢 Frontend Check (Lint, Build & Test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./client
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22' # Coincide con tu config local
+          cache: 'npm'
+          cache-dependency-path: client/package.json
+
+      - name: Instalar dependencias
+        run: npm install 
+
+      - name: Verificar Tipado (Type Check)
+        # Ejecuta vue-tsc para asegurar que no hay errores de TypeScript
+        run: npm run type-check
+
+      - name: Linting (Calidad de código)
+        # Verifica reglas de ESLint y Prettier
+        run: npm run lint
+
+      - name: Build de Prueba
+        # Asegura que el proyecto compila correctamente para producción
+        run: npm run build-only
+
+  # ------------------------------------------------------------------
+  # JOB 2: Validación del Backend (.NET 9 + SQL Server)
+  # ------------------------------------------------------------------
+  backend-check:
+    name: 🔵 Backend Check (Build & Integration Tests)
+    runs-on: ubuntu-latest
+    
+    # Servicio de Base de Datos para los Tests de Integración
+    services:
+      sql-edge:
+        image: mcr.microsoft.com/azure-sql-edge:latest
+        ports:
+          - 1433:1433
+        env:
+          ACCEPT_EULA: 'Y'
+          SA_PASSWORD: "YourStrong!Passw0rd"
+        options: >-
+          --health-cmd "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P 'YourStrong!Passw0rd' -Q 'SELECT 1' || exit 1"
+          --health-interval 10s
+          --health-retries 10
+          --health-start-period 30s
+          --health-timeout 5s
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restaurar Dependencias
+        run: dotnet restore EcommerceCore/EcommerceCore.sln
+
+      - name: Compilar (Build)
+        run: dotnet build EcommerceCore/EcommerceCore.sln --no-restore --configuration Release
+
+      - name: Ejecutar Tests (Unitarios e Integración)
+        # Ejecuta los tests conectándose al servicio 'sql-edge' definido arriba
+        run: dotnet test EcommerceCore/EcommerceCore.sln --no-build --configuration Release --verbosity normal
+        env:
+          # Connection String para los tests de integración (apunta a localhost del runner)
+          ConnectionStrings__TestConnection: "Server=localhost,1433;Database=master;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;"
+          # Variables dummy para que los validadores no fallen al iniciar
+          Jwt__Key: "8a5676f81712ec7e06d61e599e43cd5afb87dc4efa36fdca550cf10616f20fa0f97a13a9dd43d02b76993d7228f478e7400069230b7a7c5ca5f9941209b2b059"
+          Authentication__Google__ClientId: "dummy_client_id"
+          Authentication__Google__ClientSecret: "dummy_client_secret"
+          MailtrapSettings__Username: "dummy"
+          MailtrapSettings__Password: "dummy"

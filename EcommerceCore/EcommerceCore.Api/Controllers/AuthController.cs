@@ -1,0 +1,185 @@
+using Asp.Versioning;
+using EcommerceCore.Application.DTOs;
+using EcommerceCore.Application.Interfaces;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+
+namespace EcommerceCore.Api.Controllers;
+
+/// <summary>
+/// Gestiona las peticiones HTTP relacionadas con la autenticación de usuarios.
+/// Este es un "controlador delgado" (thin controller), lo que significa que su única
+/// responsabilidad es recibir las peticiones y delegar toda la lógica de negocio
+/// a la capa de servicio a través de la interfaz IAuthService.
+/// </summary>
+[ApiController]
+[Route(template: "api/v{version:apiVersion}/[controller]")]
+[ApiVersion(version: "1.0")]
+[EnableRateLimiting(policyName: "AuthPolicy")]
+public class AuthController(IAuthService authService) : ControllerBase
+{
+    private void SetRefreshTokenInCookie(string refreshToken)
+    {
+        var cookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            Expires = DateTime.UtcNow.AddDays(value: 30),
+            SameSite = SameSiteMode.Lax,
+            Secure = Request.IsHttps // Solo Secure=true si estamos en HTTPS
+        };
+
+        Response.Cookies.Append(key: "refreshToken",
+            value: refreshToken,
+            options: cookieOptions);
+    }
+
+    /// <summary>
+    /// Endpoint para registrar un nuevo usuario en el sistema.
+    /// </summary>
+    /// <param name="registroDto">Un objeto JSON con los datos del nuevo usuario (nombre, email, contraseña, etc.).</param>
+    /// <returns>
+    /// Un resultado 200 OK si el registro es exitoso.
+    /// Un resultado 400 Bad Request si los datos son inválidos o el email ya está en uso.
+    /// </returns>
+    [HttpPost(template: "register")]
+    public async Task<IActionResult> Register([FromBody] RegistroUsuarioDto registroDto)
+    {
+        // Se delega la lógica de registro al servicio de autenticación.
+        var result = await authService.RegisterAsync(registroDto: registroDto);
+        // Si el servicio indica que la operación no fue exitosa, se devuelve un error.
+        if (!result.Success) return BadRequest(error: new { message = result.Message });
+        // Si el registro fue exitoso, se devuelve una respuesta afirmativa.
+        return Ok(value: new { message = result.Message });
+    }
+
+    /// <summary>
+    /// Endpoint para el inicio de sesión con email y contraseña.
+    /// </summary>
+    /// <param name="loginDto">Un objeto JSON con el email y la contraseña del usuario.</param>
+    /// <returns>
+    /// Un resultado 200 OK con un token JWT si las credenciales son válidas.
+    /// Un resultado 401 Unauthorized si las credenciales son incorrectas.
+    /// </returns>
+    [HttpPost(template: "login")]
+    public async Task<IActionResult> Login([FromBody] LoginUsuarioDto loginDto)
+    {
+        // Se delega la lógica de login al servicio de autenticación
+        var result = await authService.LoginAsync(loginDto: loginDto);
+        // Guarda el refresh token en la cookie
+        SetRefreshTokenInCookie(refreshToken: result.RefreshToken);
+        // Devuelve el access token en el JSON
+        return Ok(value: new { accessToken = result.AccessToken });
+    }
+
+    /// <summary>
+    /// Endpoint para el inicio de sesión con un proveedor externo (ej. Google).
+    /// </summary>
+    /// <param name="externalLoginDto">Un objeto JSON con el nombre del proveedor y el token de ID obtenido del cliente.</param>
+    /// <returns>
+    /// Un resultado 200 OK con un token JWT si la autenticación externa es exitosa.
+    /// Un resultado 401 Unauthorized si el token del proveedor es inválido o no se puede verificar.
+    /// </returns>
+    [HttpPost(template: "external-login")]
+    public async Task<IActionResult> ExternalLogin([FromBody] ExternalLoginDto externalLoginDto)
+    {
+        // Se delega la lógica al servicio de autenticación
+        var result = await authService.ExternalLoginAsync(externalLoginDto: externalLoginDto);
+        // Guarda el refresh token en la cookie
+        SetRefreshTokenInCookie(refreshToken: result.RefreshToken);
+        // Devuelve el access token en el JSON
+        return Ok(value: new { accessToken = result.AccessToken });
+    }
+
+    /// <summary>
+    /// Endpoint para refrescar un token de acceso usando un refresh token.
+    /// </summary>
+    [HttpPost(template: "refresh")]
+    public async Task<IActionResult> Refresh()
+    {
+        // Leer el token desde la Cookie 
+        var refreshToken = Request.Cookies[key: "refreshToken"];
+        // Si el token no se encuentra, se retorna un error
+        if (string.IsNullOrEmpty(value: refreshToken))
+            return BadRequest(error: new { message = "No se encontró el token de refresco en las cookies." });
+
+        // Validar y rotar
+        var tokenResponse = await authService.RefreshTokenAsync(refreshToken: refreshToken);
+
+        // Actualizar la cookie con el nuevo token
+        SetRefreshTokenInCookie(refreshToken: tokenResponse.RefreshToken);
+
+        return Ok(value: new { accessToken = tokenResponse.AccessToken });
+    }
+
+    /// <summary>
+    /// Endpoint para cerrar la sesión de un usuario.
+    /// </summary>
+    /// <returns>
+    /// Un resultado 200 OK si la operación se ejecuta correctamente, con un mensaje confirmando que la sesión fue cerrada.
+    /// </returns>
+    [HttpPost(template: "logout")]
+    public IActionResult Logout()
+    {
+        // Borra la cookie estableciendo una fecha pasada
+        Response.Cookies.Delete(key: "refreshToken");
+        return Ok(value: new { message = "Sesión cerrada correctamente." });
+    }
+
+    /// <summary>
+    /// Endpoint para verificar el email de un usuario.
+    /// </summary>
+    /// <param name="token">El token enviado al email del usuario.</param>
+    /// <returns>
+    /// Un resultado 200 OK si el token es válido.
+    /// Un resultado 400 Bad Request si el token no es válido.
+    /// </returns>
+    [HttpGet(template: "verify-email")]
+    public async Task<IActionResult> VerifyEmail([FromQuery] string token)
+    {
+        // Se delega la lógica de verificación de email al servicio de autenticación
+        var result = await authService.VerifyEmailAsync(token: token);
+        // Si el servicio indica que la operación no fue exitosa, se devuelve un error.
+        if (!result.Success) return BadRequest(error: new { message = result.Message });
+        // Si el registro fue exitoso, se devuelve una respuesta afirmativa.
+        return Ok(value: new { message = result.Message });
+    }
+
+    /// <summary>
+    /// Endpoint para restablecer la contraseña de un usuario.
+    /// </summary>
+    /// <param name="dto">El DTO con el token y la nueva contraseña.</param>
+    /// <returns>
+    /// Un resultado 200 OK si la operación fue exitosa.
+    /// Un resultado 400 Bad Request si el token no es válido o ha expirado.
+    /// Un resultado 404 Not Found si el usuario no existe.
+    /// </returns>
+    [HttpPost(template: "reset-password")]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+    {
+        // Se delega la lógica de restablecimiento de contraseña al servicio de autenticación
+        var result = await authService.ResetPasswordAsync(dto: dto);
+        // Si el servicio indica que la operación no fue exitosa, se devuelve un error.
+        if (!result.Success) return BadRequest(error: new { message = result.Message });
+        // Si el registro fue exitoso, se devuelve una respuesta afirmativa.
+        return Ok(value: new { message = result.Message });
+    }
+
+    /// <summary>
+    /// Endpoint que inicia el proceso de restablecimiento de contraseña.
+    /// </summary>
+    /// <param name="dto">El DTO con el email del usuario que olvidó su contraseña.</param>
+    /// <returns>
+    /// Un resultado 200 OK si el proceso de restablecimiento fue iniciado correctamente.
+    /// Un resultado 400 Bad Request si el email no existe o no se pudo iniciar el proceso.
+    /// </returns>
+    [HttpPost(template: "forgot-password")]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto dto)
+    {
+        // Se delega la lógica de restablecimiento de contraseña al servicio de autenticación
+        var result = await authService.ForgotPasswordAsync(email: dto.Email);
+        // Si el servicio indica que la operación no fue exitosa, se devuelve un error.
+        if (!result.Success) return BadRequest(error: new { message = result.Message });
+        // Si el registro fue exitoso, se devuelve una respuesta afirmativa.
+        return Ok(value: new { message = result.Message });
+    }
+}
